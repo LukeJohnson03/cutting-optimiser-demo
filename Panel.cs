@@ -11,7 +11,7 @@ namespace CuttingOptimiserDemo
         public int Id {  get; set; }
         public double Width { get; set; }
         public double Height { get; set; }
-        public int Quanity { get; set; }
+        public int Quantity { get; set; }
         public List<Placement> Placements { get; set; } = new();
     }
 }
