@@ -1,41 +1,33 @@
-﻿using System.Text;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System;
+﻿using System;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using Microsoft.EntityFrameworkCore;
-using SQLitePCL;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace CuttingOptimiserDemo
 {
     public partial class MainWindow : Window
     {
-        private readonly GlassCuttingContext _context;
+        private readonly GlassCuttingContext _context = new();
+        private StockSheet _currentSheet;
 
         public MainWindow()
         {
-            try
-            {
-                Batteries.Init();
+            InitializeComponent();
+            InitializeDatabase();
+            LoadSheets();
 
-                InitializeComponent();
+            // Add the SizeChanged handler programmatically
+            this.SizeChanged += MainWindow_SizeChanged;
+        }
 
-                _context = new GlassCuttingContext();
-                InitializeDatabase();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Failed to initialize application: {ex.Message}",
-                              "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                Close();
-            }
+        private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            EnsureVisible();
         }
 
         private void InitializeDatabase()
@@ -43,92 +35,147 @@ namespace CuttingOptimiserDemo
             try
             {
                 _context.Database.EnsureCreated();
-                StatusText.Text = "Database Ready";
+                StatusText.Text = "Database ready";
             }
             catch (Exception ex)
             {
-                StatusText.Text = "Database Error";
-                throw new Exception("Failed to initialize database", ex);
+                MessageBox.Show($"Database error: {ex.Message}");
             }
         }
 
-        private void Optimize_Click(object sender, RoutedEventArgs e)
+        private void LoadSheets()
         {
+            var sheets = _context.StockSheets.ToList();
+            var displaySheets = sheets.Select(s => new
+            {
+                Sheet = s,
+                DisplayText = $"Sheet {s.Id}: {s.Width:F0}×{s.Height:F0}mm ({s.Width / 1000:F1}×{s.Height / 1000:F1}m - {(s.Width * s.Height) / 1000000:F2}m²)"
+            }).ToList();
+
+            SheetSelector.ItemsSource = displaySheets;
+            SheetSelector.DisplayMemberPath = "DisplayText";
+            SheetSelector.SelectedValuePath = "Sheet";
+            SheetSelector.SelectedIndex = 0;
+        }
+
+        private async void Optimize_Click(object sender, RoutedEventArgs e)
+        {
+            OptimizeButton.IsEnabled = false;
+
             try
             {
-                // Clear previous results
-                _context.Placements.RemoveRange(_context.Placements);
-                _context.CutSegments.RemoveRange(_context.CutSegments);
+                var selectedItem = SheetSelector.SelectedItem;
+                var selectedSheet = selectedItem?.GetType().GetProperty("Sheet")?.GetValue(selectedItem) as StockSheet;
 
-                // Get data and run optimization
-                var sheets = _context.StockSheets.ToList();
-                var panels = _context.Panels.ToList();
-                var packingService = new PackingService();
-                var cutService = new CutService();
+                if (selectedSheet == null) return;
 
+                StatusText.Text = $"Optimizing sheet {selectedSheet.Id}...";
+                await Task.Run(() => RunOptimization(selectedSheet));
 
-                foreach (var sheet in sheets)
-                {
-                    var placements = packingService.PackPanels(sheet, panels);
-                    var cuts = cutService.ExtractCuts(sheet, placements);
-
-                    _context.Placements.AddRange(placements);
-                    _context.CutSegments.AddRange(cuts);
-
-                    // Visualises each sheet
-                    renderLayout(sheet, placements, cuts);
-                }
-
-                _context.SaveChanges();
-                StatusText.Text = $"Optimized {sheets.Count} sheet(s)";
+                StatusText.Text = $"Sheet {selectedSheet.Id} optimized";
             }
-            catch (Exception ex) 
+            catch (Exception ex)
             {
-                StatusText.Text = $"Error: { ex.Message}";
+                StatusText.Text = $"Error: {ex.Message}";
+                MessageBox.Show(ex.Message, "Optimization Error");
             }
-
+            finally
+            {
+                OptimizeButton.IsEnabled = true;
+            }
         }
 
-        private void renderLayout(StockSheet sheet, List<Placement> placements, List<CutSegment> cuts)
+        private void RunOptimization(StockSheet sheet)
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                _currentSheet = sheet;
+                _context.Placements.RemoveRange(_context.Placements.Where(p => p.StockSheetId == sheet.Id));
+                _context.CutSegments.RemoveRange(_context.CutSegments.Where(c => c.StockSheetId == sheet.Id));
+                _context.SaveChanges();
+                StatusText.Text = $"Processing sheet {sheet.Id}...";
+            });
+
+            var panels = _context.Panels.ToList();
+            var packingService = new PackingService();
+            var cutService = new CutService();
+
+            var placements = packingService.PackPanels(sheet, panels);
+            var cuts = cutService.ExtractCuts(sheet, placements);
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                _context.Placements.AddRange(placements);
+                _context.CutSegments.AddRange(cuts);
+                _context.SaveChanges();
+
+                RenderLayout(sheet, placements, cuts);
+                EnsureVisible();
+                StatusText.Text = $"Sheet {sheet.Id} optimized - {placements.Count} panels placed";
+            });
+        }
+
+        private void RenderLayout(StockSheet sheet, List<Placement> placements, List<CutSegment> cuts)
         {
             LayoutCanvas.Children.Clear();
             LayoutCanvas.Width = sheet.Width;
             LayoutCanvas.Height = sheet.Height;
 
-            // Draws sheet background
+            // Draw sheet background
             var sheetRect = new System.Windows.Shapes.Rectangle
             {
                 Width = sheet.Width,
                 Height = sheet.Height,
-                Fill = Brushes.White,
-                Stroke = Brushes.Black,
-                StrokeThickness = 2
+                Fill = Brushes.WhiteSmoke,
+                Stroke = Brushes.Gray,
+                StrokeThickness = 1
             };
-
             Canvas.SetLeft(sheetRect, 0);
             Canvas.SetTop(sheetRect, 0);
             LayoutCanvas.Children.Add(sheetRect);
 
-            // Draws panels
+            // Draw usable area (with 20mm margin)
+            var usableArea = new System.Windows.Shapes.Rectangle
+            {
+                Width = sheet.Width - 40,
+                Height = sheet.Height - 40,
+                Fill = Brushes.White,
+                Stroke = Brushes.Black,
+                StrokeThickness = 1
+            };
+            Canvas.SetLeft(usableArea, 20);
+            Canvas.SetTop(usableArea, 20);
+            LayoutCanvas.Children.Add(usableArea);
+
+            // Draw panels
             foreach (var placement in placements)
             {
                 var panelRect = new System.Windows.Shapes.Rectangle
                 {
                     Width = placement.Panel.Width,
                     Height = placement.Panel.Height,
-                    Fill = Brushes.LightBlue,
+                    Fill = new SolidColorBrush(Color.FromArgb(150, 173, 216, 230)),
                     Stroke = Brushes.DarkBlue,
-                    StrokeThickness = 1,
-                    ToolTip = $"Panel {placement.Panel.Id} ({placement.Panel.Width}x{placement.Panel.Height}mm)"
+                    StrokeThickness = 0.5
                 };
-
                 Canvas.SetLeft(panelRect, placement.X);
                 Canvas.SetTop(panelRect, placement.Y);
                 LayoutCanvas.Children.Add(panelRect);
 
+                // Add panel label
+                var label = new TextBlock
+                {
+                    Text = $"{placement.Panel.Id}",
+                    FontSize = 12,
+                    Foreground = Brushes.Black,
+                    FontWeight = FontWeights.Bold
+                };
+                Canvas.SetLeft(label, placement.X + 5);
+                Canvas.SetTop(label, placement.Y + 5);
+                LayoutCanvas.Children.Add(label);
             }
 
-            // Draws cuts 
+            // Draw cuts
             foreach (var cut in cuts)
             {
                 var line = new Line
@@ -137,15 +184,31 @@ namespace CuttingOptimiserDemo
                     Y1 = cut.StartY,
                     X2 = cut.EndX,
                     Y2 = cut.EndY,
-
                     Stroke = cut.IsFullLengthX ? Brushes.Red : Brushes.Green,
-                    StrokeThickness = 1,
-                    ToolTip = cut.IsFullLengthX ? "Full-length X cut" : "Regular cut"
+                    StrokeThickness = 2,
+                    StrokeDashArray = cut.IsFullLengthX ? null : new DoubleCollection { 4, 2 }
                 };
                 LayoutCanvas.Children.Add(line);
             }
+        }
 
+        private void EnsureVisible()
+        {
+            if (LayoutCanvas.Children.Count == 0 || _currentSheet == null) return;
 
+            var contentWidth = _currentSheet.Width;
+            var contentHeight = _currentSheet.Height;
+            var viewportWidth = LayoutCanvas.ActualWidth;
+            var viewportHeight = LayoutCanvas.ActualHeight;
+
+            if (contentWidth > 0 && contentHeight > 0 && viewportWidth > 0 && viewportHeight > 0)
+            {
+                var scaleX = viewportWidth / contentWidth;
+                var scaleY = viewportHeight / contentHeight;
+                var scale = Math.Min(scaleX, scaleY) * 0.9; // 90% of available space
+
+                ZoomSlider.Value = Math.Min(Math.Max(scale, ZoomSlider.Minimum), ZoomSlider.Maximum);
+            }
         }
 
     }
