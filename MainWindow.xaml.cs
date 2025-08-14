@@ -211,5 +211,9 @@ namespace CuttingOptimiserDemo
             }
         }
 
+        private void Export_Click(object sender, RoutedEventArgs e)
+        {
+
+        }
     }
 }
