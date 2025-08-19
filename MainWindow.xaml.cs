@@ -6,6 +6,8 @@ using System.Windows.Media;
 using System.Windows.Shapes;
 using Microsoft.EntityFrameworkCore;
 using System.Collections.Generic;
+using System.IO;
+using System.Windows.Media.Imaging;
 using System.Threading.Tasks;
 
 namespace CuttingOptimiserDemo
@@ -21,7 +23,7 @@ namespace CuttingOptimiserDemo
             InitializeDatabase();
             LoadSheets();
 
-            // Add the SizeChanged handler programmatically
+            // Attach resize handler
             this.SizeChanged += MainWindow_SizeChanged;
         }
 
@@ -46,6 +48,7 @@ namespace CuttingOptimiserDemo
         private void LoadSheets()
         {
             var sheets = _context.StockSheets.ToList();
+
             var displaySheets = sheets.Select(s => new
             {
                 Sheet = s,
@@ -71,8 +74,6 @@ namespace CuttingOptimiserDemo
 
                 StatusText.Text = $"Optimizing sheet {selectedSheet.Id}...";
                 await Task.Run(() => RunOptimization(selectedSheet));
-
-                StatusText.Text = $"Sheet {selectedSheet.Id} optimized";
             }
             catch (Exception ex)
             {
@@ -90,9 +91,12 @@ namespace CuttingOptimiserDemo
             Application.Current.Dispatcher.Invoke(() =>
             {
                 _currentSheet = sheet;
+
+                // Clear previous results
                 _context.Placements.RemoveRange(_context.Placements.Where(p => p.StockSheetId == sheet.Id));
                 _context.CutSegments.RemoveRange(_context.CutSegments.Where(c => c.StockSheetId == sheet.Id));
                 _context.SaveChanges();
+
                 StatusText.Text = $"Processing sheet {sheet.Id}...";
             });
 
@@ -111,6 +115,7 @@ namespace CuttingOptimiserDemo
 
                 RenderLayout(sheet, placements, cuts);
                 EnsureVisible();
+
                 StatusText.Text = $"Sheet {sheet.Id} optimized - {placements.Count} panels placed";
             });
         }
@@ -121,7 +126,7 @@ namespace CuttingOptimiserDemo
             LayoutCanvas.Width = sheet.Width;
             LayoutCanvas.Height = sheet.Height;
 
-            // Draw sheet background
+            // Sheet background
             var sheetRect = new System.Windows.Shapes.Rectangle
             {
                 Width = sheet.Width,
@@ -134,7 +139,7 @@ namespace CuttingOptimiserDemo
             Canvas.SetTop(sheetRect, 0);
             LayoutCanvas.Children.Add(sheetRect);
 
-            // Draw usable area (with 20mm margin)
+            // Usable area (20mm margin)
             var usableArea = new System.Windows.Shapes.Rectangle
             {
                 Width = sheet.Width - 40,
@@ -147,7 +152,7 @@ namespace CuttingOptimiserDemo
             Canvas.SetTop(usableArea, 20);
             LayoutCanvas.Children.Add(usableArea);
 
-            // Draw panels
+            // Panels
             foreach (var placement in placements)
             {
                 var panelRect = new System.Windows.Shapes.Rectangle
@@ -162,10 +167,10 @@ namespace CuttingOptimiserDemo
                 Canvas.SetTop(panelRect, placement.Y);
                 LayoutCanvas.Children.Add(panelRect);
 
-                // Add panel label
+                // Panel label
                 var label = new TextBlock
                 {
-                    Text = $"{placement.Panel.Id}",
+                    Text = $"Panel ID: {placement.Panel.Id}, Dimensions: {placement.Panel.Width}x{placement.Panel.Height}",
                     FontSize = 12,
                     Foreground = Brushes.Black,
                     FontWeight = FontWeights.Bold
@@ -175,7 +180,7 @@ namespace CuttingOptimiserDemo
                 LayoutCanvas.Children.Add(label);
             }
 
-            // Draw cuts
+            // Cuts
             foreach (var cut in cuts)
             {
                 var line = new Line
@@ -205,7 +210,7 @@ namespace CuttingOptimiserDemo
             {
                 var scaleX = viewportWidth / contentWidth;
                 var scaleY = viewportHeight / contentHeight;
-                var scale = Math.Min(scaleX, scaleY) * 0.9; // 90% of available space
+                var scale = Math.Min(scaleX, scaleY) * 0.9;
 
                 ZoomSlider.Value = Math.Min(Math.Max(scale, ZoomSlider.Minimum), ZoomSlider.Maximum);
             }
@@ -213,7 +218,100 @@ namespace CuttingOptimiserDemo
 
         private void Export_Click(object sender, RoutedEventArgs e)
         {
+            var saveDialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = "PNG Image|*.png",
+                Title = "Save Layout as PNG",
+                FileName = $"GlassCuttingLayout_{DateTime.Now:yyyyMMddHHmmss}.png"
+            };
 
+            if (saveDialog.ShowDialog() == true)
+            {
+                try
+                {
+                    if (LayoutCanvas.Children.Count == 0)
+                    {
+                        MessageBox.Show("No layout to export. Please run an optimization first.", "Export Error");
+                        return;
+                    }
+
+                    LayoutCanvas.UpdateLayout();
+
+                    // Determine content bounds
+                    double minX = double.MaxValue, minY = double.MaxValue;
+                    double maxX = double.MinValue, maxY = double.MinValue;
+                    bool hasContent = false;
+
+                    foreach (UIElement child in LayoutCanvas.Children)
+                    {
+                        if (child is FrameworkElement element)
+                        {
+                            double x = double.IsNaN(Canvas.GetLeft(element)) ? 0 : Canvas.GetLeft(element);
+                            double y = double.IsNaN(Canvas.GetTop(element)) ? 0 : Canvas.GetTop(element);
+                            double width = element.ActualWidth > 0 ? element.ActualWidth : element.Width;
+                            double height = element.ActualHeight > 0 ? element.ActualHeight : element.Height;
+
+                            if (!double.IsNaN(width) && !double.IsNaN(height) && width > 0 && height > 0)
+                            {
+                                minX = Math.Min(minX, x);
+                                minY = Math.Min(minY, y);
+                                maxX = Math.Max(maxX, x + width);
+                                maxY = Math.Max(maxY, y + height);
+                                hasContent = true;
+                            }
+                        }
+                    }
+
+                    if (!hasContent) return;
+
+                    // Add padding around content
+                    double padding = 50;
+                    double contentWidth = maxX - minX;
+                    double contentHeight = maxY - minY;
+                    double exportWidth = contentWidth + (padding * 2);
+                    double exportHeight = contentHeight + (padding * 2);
+
+                    // Render target
+                    var renderTarget = new RenderTargetBitmap(
+                        (int)Math.Ceiling(exportWidth),
+                        (int)Math.Ceiling(exportHeight),
+                        96, 96, PixelFormats.Pbgra32);
+
+                    // Render canvas into image
+                    var visual = new DrawingVisual();
+                    using (var context = visual.RenderOpen())
+                    {
+                        context.DrawRectangle(Brushes.White, null, new Rect(0, 0, exportWidth, exportHeight));
+
+                        var canvasBrush = new VisualBrush(LayoutCanvas)
+                        {
+                            Stretch = Stretch.None,
+                            AlignmentX = AlignmentX.Center,
+                            AlignmentY = AlignmentY.Center
+                        };
+
+                        context.DrawRectangle(canvasBrush, null,
+                            new Rect(padding - minX, padding - minY, contentWidth, contentHeight));
+                    }
+
+                    renderTarget.Render(visual);
+
+                    // Save PNG
+                    var pngEncoder = new PngBitmapEncoder();
+                    pngEncoder.Frames.Add(BitmapFrame.Create(renderTarget));
+                    using (var stream = File.Create(saveDialog.FileName))
+                    {
+                        pngEncoder.Save(stream);
+                    }
+
+                    StatusText.Text = $"Layout saved to {System.IO.Path.GetFileName(saveDialog.FileName)}";
+                }
+                catch (Exception ex)
+                {
+                    StatusText.Text = $"Export failed: {ex.Message}";
+                    MessageBox.Show($"Error saving image: {ex.Message}", "Export Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
         }
     }
 }

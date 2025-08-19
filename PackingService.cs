@@ -8,7 +8,7 @@ namespace CuttingOptimiserDemo
     {
         public List<Placement> PackPanels(StockSheet sheet, List<Panel> panels)
         {
-            // Apply 20mm margin - this creates our initial usable area
+            // Usable area inside 20mm margins
             double usableWidth = sheet.Width - 40;
             double usableHeight = sheet.Height - 40;
 
@@ -19,7 +19,7 @@ namespace CuttingOptimiserDemo
 
             var placements = new List<Placement>();
 
-            // Sort panels by descending area (Best-Area-Fit typically uses largest first)
+            // Panels sorted by descending area
             var sortedPanels = panels.OrderByDescending(p => p.Width * p.Height).ToList();
 
             foreach (var panel in sortedPanels)
@@ -28,7 +28,6 @@ namespace CuttingOptimiserDemo
 
                 if (bestFit.rect != null)
                 {
-                    // Create the placement
                     var placement = new Placement
                     {
                         Panel = panel,
@@ -39,14 +38,13 @@ namespace CuttingOptimiserDemo
 
                     placements.Add(placement);
 
-                    // Remove the used rectangle
                     freeRects.Remove(bestFit.rect);
 
-                    // Perform guillotine split
+                    // Split free space using guillotine cut
                     var newRects = PerformGuillotineSplit(bestFit.rect, panel, bestFit.splitVertical);
                     freeRects.AddRange(newRects);
 
-                    // Clean up overlapping rectangles
+                    // Remove any overlapping free rectangles
                     RemoveOverlappingRectangles(freeRects);
                 }
             }
@@ -63,20 +61,17 @@ namespace CuttingOptimiserDemo
 
             foreach (var rect in freeRects)
             {
-                // Check if panel fits in this rectangle
+                // Check normal orientation
                 if (panel.Width <= rect.Width && panel.Height <= rect.Height)
                 {
-                    // Calculate leftover area after placement
                     double leftoverArea = rect.Area - (panel.Width * panel.Height);
 
-                    // Bonus scoring for full-width placements (enables X-breaker usage)
                     double fullWidthScore = 0;
                     if (rect.X == 20 && panel.Width == usableWidth)
                     {
-                        fullWidthScore = 1000; // High bonus for full-width cuts
+                        fullWidthScore = 1000; // Favor full-width cuts
                     }
 
-                    // Best-Area-Fit: prefer smallest area that fits, but prioritize full-width
                     double totalScore = leftoverArea - fullWidthScore;
 
                     if (totalScore < bestArea || (totalScore == bestArea && fullWidthScore > bestFullWidthScore))
@@ -85,22 +80,16 @@ namespace CuttingOptimiserDemo
                         bestFullWidthScore = fullWidthScore;
                         bestRect = rect;
 
-                        // Determine optimal split direction for guillotine
-                        // Generally prefer the split that creates more useful rectangles
                         double horizontalWaste = (rect.Width - panel.Width) * rect.Height;
                         double verticalWaste = rect.Width * (rect.Height - panel.Height);
-
-                        // Split in the direction that minimizes the larger waste rectangle
                         bestSplitVertical = horizontalWaste > verticalWaste;
                     }
                 }
 
-                // Also try rotated orientation if dimensions are different
+                // Check rotated orientation
                 if (panel.Width != panel.Height && panel.Height <= rect.Width && panel.Width <= rect.Height)
                 {
                     double leftoverArea = rect.Area - (panel.Width * panel.Height);
-
-                    // Note: Rotated panels typically can't achieve full-width cuts
                     double totalScore = leftoverArea;
 
                     if (totalScore < bestArea)
@@ -109,13 +98,9 @@ namespace CuttingOptimiserDemo
                         bestFullWidthScore = 0;
                         bestRect = rect;
 
-                        // For rotated panels, determine split direction
                         double horizontalWaste = (rect.Width - panel.Height) * rect.Height;
                         double verticalWaste = rect.Width * (rect.Height - panel.Width);
                         bestSplitVertical = horizontalWaste > verticalWaste;
-
-                        // Note: In a full implementation, you'd need to handle panel rotation
-                        // For now, we'll assume panels maintain their original orientation
                     }
                 }
             }
@@ -129,9 +114,7 @@ namespace CuttingOptimiserDemo
 
             if (splitVertical)
             {
-                // Vertical split: create right and bottom rectangles
-
-                // Right rectangle (if there's space)
+                // Right rectangle
                 if (rect.Width > panel.Width)
                 {
                     newRects.Add(new Rectangle(
@@ -142,7 +125,7 @@ namespace CuttingOptimiserDemo
                     ));
                 }
 
-                // Bottom rectangle (if there's space) - only under the placed panel
+                // Bottom rectangle
                 if (rect.Height > panel.Height)
                 {
                     newRects.Add(new Rectangle(
@@ -155,9 +138,7 @@ namespace CuttingOptimiserDemo
             }
             else
             {
-                // Horizontal split: create bottom and right rectangles
-
-                // Bottom rectangle (if there's space)
+                // Bottom rectangle
                 if (rect.Height > panel.Height)
                 {
                     newRects.Add(new Rectangle(
@@ -168,7 +149,7 @@ namespace CuttingOptimiserDemo
                     ));
                 }
 
-                // Right rectangle (if there's space) - only to the right of the placed panel
+                // Right rectangle
                 if (rect.Width > panel.Width)
                 {
                     newRects.Add(new Rectangle(
@@ -193,17 +174,15 @@ namespace CuttingOptimiserDemo
                 {
                     var rect2 = freeRects[j];
 
-                    // If rect1 is completely inside rect2, remove rect1
                     if (IsRectangleInsideAnother(rect1, rect2))
                     {
                         freeRects.RemoveAt(i);
                         break;
                     }
-                    // If rect2 is completely inside rect1, remove rect2
                     else if (IsRectangleInsideAnother(rect2, rect1))
                     {
                         freeRects.RemoveAt(j);
-                        i--; // Adjust index since we removed an item before current
+                        i--;
                     }
                 }
             }

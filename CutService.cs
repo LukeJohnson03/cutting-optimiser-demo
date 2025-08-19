@@ -10,14 +10,14 @@ namespace CuttingOptimiserDemo
         {
             var cuts = new List<CutSegment>();
 
-            // If no placements, return empty cuts
+            // Return empty if no placements
             if (!placements.Any()) return cuts;
 
-            // Get all unique X and Y coordinates where cuts are needed
+            // Track unique X and Y coordinates for cuts
             var xCoordinates = new HashSet<double>();
             var yCoordinates = new HashSet<double>();
 
-            // Add sheet boundaries (with 20mm margin)
+            // Add sheet boundaries (20mm margin)
             xCoordinates.Add(20);
             xCoordinates.Add(sheet.Width - 20);
             yCoordinates.Add(20);
@@ -35,10 +35,10 @@ namespace CuttingOptimiserDemo
             var sortedX = xCoordinates.OrderBy(x => x).ToList();
             var sortedY = yCoordinates.OrderBy(y => y).ToList();
 
-            // Generate horizontal cuts (Y-coordinates)
+            // Horizontal cuts
             foreach (var y in sortedY)
             {
-                // Skip the top and bottom boundaries of the sheet
+                // Skip top/bottom sheet edges
                 if (y == 20 || y == sheet.Height - 20) continue;
 
                 var segments = GetHorizontalCutSegments(y, sortedX, placements);
@@ -56,10 +56,10 @@ namespace CuttingOptimiserDemo
                 }
             }
 
-            // Generate vertical cuts (X-coordinates)
+            // Vertical cuts
             foreach (var x in sortedX)
             {
-                // Skip the left and right boundaries of the sheet
+                // Skip left/right sheet edges
                 if (x == 20 || x == sheet.Width - 20) continue;
 
                 var segments = GetVerticalCutSegments(x, sortedY, placements);
@@ -71,7 +71,7 @@ namespace CuttingOptimiserDemo
                         StartY = segment.StartY,
                         EndX = x,
                         EndY = segment.EndY,
-                        IsFullLengthX = false, // Vertical cuts are never full-length X
+                        IsFullLengthX = false, // Vertical cuts never full X
                         StockSheet = sheet
                     });
                 }
@@ -90,7 +90,7 @@ namespace CuttingOptimiserDemo
                 var endX = sortedX[i + 1];
                 var midX = (startX + endX) / 2;
 
-                // Check if this horizontal segment intersects any panel
+                // Skip if segment intersects a panel
                 bool intersectsPanel = placements.Any(p =>
                     midX >= p.X && midX <= p.X + p.Panel.Width &&
                     y > p.Y && y < p.Y + p.Panel.Height);
@@ -114,7 +114,7 @@ namespace CuttingOptimiserDemo
                 var endY = sortedY[i + 1];
                 var midY = (startY + endY) / 2;
 
-                // Check if this vertical segment intersects any panel
+                // Skip if segment intersects a panel
                 bool intersectsPanel = placements.Any(p =>
                     midY >= p.Y && midY <= p.Y + p.Panel.Height &&
                     x > p.X && x < p.X + p.Panel.Width);
