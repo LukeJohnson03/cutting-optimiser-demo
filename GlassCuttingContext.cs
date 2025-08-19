@@ -34,7 +34,8 @@ namespace CuttingOptimiserDemo
                 new Panel { Id = 5, Width = 485, Height = 433, Quantity = 1 },
                 new Panel { Id = 6, Width = 522, Height = 466, Quantity = 5 },
                 new Panel { Id = 7, Width = 362, Height = 1756, Quantity = 2 },
-                new Panel { Id = 8, Width = 1726, Height = 926, Quantity = 2 }
+                new Panel { Id = 8, Width = 3170, Height = 400, Quantity = 1 },
+                new Panel { Id = 9, Width = 2400, Height = 350, Quantity = 1 }
             );
         }
     }

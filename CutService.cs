@@ -38,9 +38,6 @@ namespace CuttingOptimiserDemo
             // Horizontal cuts
             foreach (var y in sortedY)
             {
-                // Skip top/bottom sheet edges
-                if (y == 20 || y == sheet.Height - 20) continue;
-
                 var segments = GetHorizontalCutSegments(y, sortedX, placements);
                 foreach (var segment in segments)
                 {
@@ -50,7 +47,7 @@ namespace CuttingOptimiserDemo
                         StartY = y,
                         EndX = segment.EndX,
                         EndY = y,
-                        IsFullLengthX = segment.StartX == 20 && segment.EndX == sheet.Width - 20,
+                        IsFullLengthX = false,
                         StockSheet = sheet
                     });
                 }
@@ -71,13 +68,14 @@ namespace CuttingOptimiserDemo
                         StartY = segment.StartY,
                         EndX = x,
                         EndY = segment.EndY,
-                        IsFullLengthX = false, // Vertical cuts never full X
+                        IsFullLengthX = false,
                         StockSheet = sheet
                     });
                 }
             }
 
-            return cuts;
+            // Merge adjacent segments and properly set IsFullLengthX
+            return MergeAdjacentSegments(cuts, sheet);
         }
 
         private List<(double StartX, double EndX)> GetHorizontalCutSegments(double y, List<double> sortedX, List<Placement> placements)
@@ -126,6 +124,116 @@ namespace CuttingOptimiserDemo
             }
 
             return segments;
+        }
+
+        // Merges adjacent cut segments into continuous cuts and properly sets IsFullLengthX flag
+        private List<CutSegment> MergeAdjacentSegments(List<CutSegment> cuts, StockSheet sheet)
+        {
+            var mergedCuts = new List<CutSegment>();
+
+            // Group horizontal cuts by Y coordinate
+            var horizontalGroups = cuts.Where(c => c.StartY == c.EndY)
+                                      .GroupBy(c => c.StartY)
+                                      .ToList();
+
+            foreach (var group in horizontalGroups)
+            {
+                var segments = group.OrderBy(c => c.StartX).ToList();
+                var merged = MergeHorizontalSegments(segments, sheet);
+                mergedCuts.AddRange(merged);
+            }
+
+            // Group vertical cuts by X coordinate  
+            var verticalGroups = cuts.Where(c => c.StartX == c.EndX)
+                                    .GroupBy(c => c.StartX)
+                                    .ToList();
+
+            foreach (var group in verticalGroups)
+            {
+                var segments = group.OrderBy(c => c.StartY).ToList();
+                var merged = MergeVerticalSegments(segments, sheet);
+                mergedCuts.AddRange(merged);
+            }
+
+            return mergedCuts;
+        }
+
+        // Merges adjacent horizontal segments on the same Y coordinate
+        private List<CutSegment> MergeHorizontalSegments(List<CutSegment> segments, StockSheet sheet)
+        {
+            if (!segments.Any()) return new List<CutSegment>();
+
+            var merged = new List<CutSegment>();
+            var current = segments[0];
+
+            for (int i = 1; i < segments.Count; i++)
+            {
+                var next = segments[i];
+
+                // If segments are adjacent, merge them
+                if (Math.Abs(current.EndX - next.StartX) < 0.1)
+                {
+                    current = new CutSegment
+                    {
+                        StartX = current.StartX,
+                        StartY = current.StartY,
+                        EndX = next.EndX,
+                        EndY = current.EndY,
+                        StockSheet = sheet
+                    };
+                }
+                else
+                {
+                    current.IsFullLengthX = Math.Abs(current.StartX - 20) < 0.1 &&
+                                           Math.Abs(current.EndX - (sheet.Width - 20)) < 0.1;
+                    merged.Add(current);
+                    current = next;
+                }
+            }
+
+            current.IsFullLengthX = Math.Abs(current.StartX - 20) < 0.1 &&
+                                   Math.Abs(current.EndX - (sheet.Width - 20)) < 0.1;
+            merged.Add(current);
+
+            return merged;
+        }
+
+        // Merges adjacent vertical segments on the same X coordinate
+        private List<CutSegment> MergeVerticalSegments(List<CutSegment> segments, StockSheet sheet)
+        {
+            if (!segments.Any()) return new List<CutSegment>();
+
+            var merged = new List<CutSegment>();
+            var current = segments[0];
+
+            for (int i = 1; i < segments.Count; i++)
+            {
+                var next = segments[i];
+
+                // If segments are adjacent, merge them
+                if (Math.Abs(current.EndY - next.StartY) < 0.1)
+                {
+                    current = new CutSegment
+                    {
+                        StartX = current.StartX,
+                        StartY = current.StartY,
+                        EndX = current.EndX,
+                        EndY = next.EndY,
+                        StockSheet = sheet
+                    };
+                }
+                else
+                {
+                    current.IsFullLengthX = false;
+                    merged.Add(current);
+                    current = next;
+                }
+            }
+
+            current.IsFullLengthX = false;
+            merged.Add(current);
+
+            return merged;
         }
     }
 }
